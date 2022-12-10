@@ -4,7 +4,7 @@
     "command_name": "fakelogonscreen",
     "original_author": "bitsadmin",
     "repo_url": "https://github.com/NightlyEscaper/fakelogonscreen",
-    "help": "Windows persistence toolkit",
+    "help": "Fake Windows logon screen to steal passwords.",
     "entrypoint": "Main",
     "allow_args": false,
     "default_args": "",
