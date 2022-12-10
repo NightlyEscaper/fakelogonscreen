@@ -1,0 +1,108 @@
+name: 'Release'
+
+on:
+  schedule:
+    - cron:  '0 5 * * 0'
+    # scheduled at 05:00 every Sunday
+
+  workflow_dispatch:  # click the button on Github repo!
+
+jobs:
+  sync_latest_from_upstream:
+    runs-on: ubuntu-latest
+    name: Sync latest commits from upstream repo
+    outputs:
+      status: ${{ steps.sync.outputs.has_new_commits }}
+      tag:   ${{ steps.tag.outputs.tag }}
+    steps:
+    # REQUIRED step
+    # Step 1: run a standard checkout action, provided by github
+    - name: Checkout target repo
+      uses: actions/checkout@v2
+      with:
+        # optional: set the branch to checkout,
+        # sync action checks out your 'target_sync_branch' anyway
+        ref:  master
+        # REQUIRED if your upstream repo is private (see wiki)
+        persist-credentials: false
+
+    # REQUIRED step
+    # Step 2: run the sync action
+    - name: Sync upstream changes
+      id: sync
+      uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+      with:
+        target_sync_branch: master
+        # REQUIRED 'target_repo_token' exactly like this!
+        target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+        upstream_sync_branch: master
+        upstream_sync_repo: 0xbadjuju/Tokenvator
+        shallow_since: '1 year ago'
+
+    # Step 3: Publish with tag.
+    - name: Bump version and push tag
+      id: tag
+      if: steps.sync.outputs.has_new_commits == 'true'
+      uses: anothrNick/github-tag-action@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        WITH_V: true
+        DEFAULT_BUMP: patch
+
+  linux-windows-build:
+    name: CSharp Build
+    #if: startsWith( github.ref, 'refs/tags/v')
+    needs: [sync_latest_from_upstream]
+    if: ${{ (needs.sync_latest_from_upstream.outputs.status == 'true') || (needs.sync_latest_from_upstream.outputs.tag == '') }}
+    runs-on: windows-2019
+    timeout-minutes: 45
+
+    steps:
+
+    - name: Add msbuild to PATH
+      uses: microsoft/setup-msbuild@v1.1
+
+    - name: Check out code
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
+
+    - name: Git Fetch Tags
+      run: git fetch --prune --unshallow --tags -f
+
+    - name: Download Tools
+      run: |
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri https://github.com/stedolan/jq/releases/download/jq-1.6/jq-win64.exe -OutFile jq.exe
+        Invoke-WebRequest -Uri https://github.com/moloch--/minisign/releases/download/v0.2.1/minisign.exe -OutFile minisign.exe
+
+    - name: MSBuild
+      run: |
+        cd Source
+        nuget.exe restore FakeLogonScreen.sln
+        msbuild.exe FakeLogonScreen.sln /p:Configuration=Release /p:Platform="Any CPU" /p:OutputPath=compiled/
+
+    - name: Build Package
+      # Powershell is utter fucking trash. I AGREEEEEEEEEEEE!!!
+      run: |
+        Get-Content -Path alias.json | .\jq.exe '.version |= ""${{ needs.sync_latest_from_upstream.outputs.tag || 'v0.0.0' }}""' > ./compiled/alias.json
+        cd compiled
+        tar.exe -czvf ..\fakelogonscreen.tar.gz .
+      
+    - name: Sign Package
+      run: |
+        Write-Output "${{ secrets.MINISIGN_PRIVATE_KEY }}" > minisign.key
+        $Content1 = Get-Content -Path ./compiled/alias.json
+        $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Content1)
+        $Encoded = [System.Convert]::ToBase64String($Bytes)
+        .\minisign.exe -s minisign.key -S -m fakelogonscreen.tar.gz -t "$Encoded" -x fakelogonscreen.minisig
+
+    - name: "Publish Release"
+      uses: "marvinpinto/action-automatic-releases@latest"
+      with:
+        repo_token: "${{ secrets.GITHUB_TOKEN }}"
+        prerelease: false
+        automatic_release_tag: ${{ needs.sync_latest_from_upstream.outputs.tag || 'v0.0.0' }}
+        files: |
+          fakelogonscreen.minisig
+          fakelogonscreen.tar.gz
