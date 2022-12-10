@@ -81,6 +81,8 @@ jobs:
         cd Source
         nuget.exe restore FakeLogonScreen.sln
         msbuild.exe FakeLogonScreen.sln /p:Configuration=Release /p:Platform="Any CPU" /p:OutputPath=compiled/
+        Copy-Item -Path compiled\FakeLogonScreen.exe -Destination ..\compiled\FakeLogonScreen.exe
+
 
     - name: Build Package
       # Powershell is utter fucking trash. I AGREEEEEEEEEEEE!!!
